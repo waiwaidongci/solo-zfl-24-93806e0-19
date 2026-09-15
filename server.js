@@ -3,9 +3,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { monitorApi, startSweeper } from "./monitor-routes.js";
+import { monitorPage } from "./monitor-page.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(__dirname, "data", "pigeons.json");
+const dbPath = process.env.PIGEON_DB || join(__dirname, "data", "pigeons.json");
 const port = Number(process.env.PORT || 3024);
 
 const seed = {
@@ -63,7 +65,7 @@ const page = `<!doctype html>
   </style>
 </head>
 <body>
-  <header><div><h1>赛鸽血统环号登记站</h1><div class="meta">档案、血统、转让和归巢成绩</div></div><button id="reload">刷新</button></header>
+  <header><div><h1>赛鸽血统环号登记站</h1><div class="meta">档案、血统、转让和归巢成绩</div></div><div style="display:flex;gap:10px;align-items:center"><a class="pill" href="/monitor" style="text-decoration:none;color:var(--accent)">环境监控台 →</a><button id="reload">刷新</button></div></header>
   <main>
     <form id="form">
       <h2>创建鸽只档案</h2>
@@ -122,9 +124,20 @@ const page = `<!doctype html>
 </body>
 </html>`;
 
-const server = http.createServer(async (req, res) => {
+export const app = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+
+    // 环境监控台（新模块），旧入口 / 与 /api/pigeons/* 原样保留
+    if (url.pathname === "/monitor" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(monitorPage);
+    }
+    if (url.pathname.startsWith("/api/monitor/")) {
+      const handled = await monitorApi(req, res, url.pathname);
+      if (handled) return;
+    }
+
     const db = await loadDb();
     if (req.method === "GET" && url.pathname === "/") {
       res.writeHead(200, { "Content-Type":"text/html; charset=utf-8" });
@@ -165,4 +178,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => console.log(`Racing pigeon registry app listening on http://localhost:${port}`));
+// 直接运行（node server.js）才监听端口；被测试 import 时只导出 app
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  app.listen(port, () => console.log(`Racing pigeon registry app listening on http://localhost:${port}`));
+  startSweeper(10_000);
+}
+export { app as server };
